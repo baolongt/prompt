@@ -1,0 +1,84 @@
+# Rust ICP Canister Development Guide
+
+## Key Principles
+
+- Write clear, concise, and idiomatic Rust code with accurate examples.
+- Use async programming paradigms effectively; the canister environment is single-threaded.
+- Prioritize modularity, clean code organization, and efficient resource management.
+- Use expressive variable names that convey intent (e.g., `is_ready`, `has_data`).
+- Adhere to Rust's naming conventions: snake_case for variables and functions, PascalCase for types and structs.
+- Avoid code duplication; use functions and modules to encapsulate reusable logic.
+
+## Async Programming
+
+- For any inter-canister calls, use `async` functions to handle the asynchronous nature of the ICP environment.
+- The Internet Computer uses an asynchronous messaging model, where canisters communicate by sending messages that may be processed later rather than immediately.
+- Inter-canister calls are asynchronous and non-blocking, allowing high throughput and scalability but requiring careful management of state and message ordering.
+- Each canister processes only one update message at a time, ensuring atomic and sequential execution within a single canister, but multiple canisters can execute in parallel.
+- State changes are committed at message handler boundaries, so only the current handler is atomic, not the entire async method.
+- Failures after an inter-canister call only roll back changes in the current handler, not previous ones, so you must manage state consistency explicitly.
+- Developers must guard against reentrancy and concurrency issues, as concurrent executions and interleaving can affect shared state.
+
+### Example
+
+```rust
+async fn do_foo() -> Result<(), CustomError> {
+    // Stable memory is a persistent storage mechanism for canisters and it is synchronous
+    save_data_to_stable_memory();
+
+    // Inter-canister calls are asynchronous, so we use async functions.
+    transfer_tokens("recipient", 100).await?;
+
+    save_data_to_stable_memory();
+    Ok(())
+}
+```
+
+1. The first `save_data_to_stable_memory` will commit one state change.
+2. `transfer_tokens` will be another committed state change.
+3. If `transfer_tokens` succeeds, the second `save_data_to_stable_memory` will commit another state change, but the first one will not be rolled back if `transfer_tokens` fails.
+
+## Randomness in Canisters
+
+- Always initialize and reseed your PRNG in both `init` and `post_upgrade` hooks, since static variables are cleared on upgrade and `init` is not called during upgrades.
+
+## Data Storage in Canisters
+
+- There are two kinds of storage in a canister: stable memory and heap memory.
+- **Heap memory** is the regular Wasm memory used for storing variables and data structures during execution, limited to 4 GiB.
+  - Heap memory is not persistent across canister upgrades—data in heap memory is lost when the canister is upgraded or reinstalled.
+  - Heap memory is used by default for most in-memory operations and temporary data.
+- **Stable memory** is a separate, persistent storage area designed to retain data across canister upgrades.
+  - Can be up to 500 GiB if the subnet allows it.
+  - Stable memory persists across upgrades and reinstallation.
+  - Once allocated, data cannot be deallocated even if it is no longer used.
+
+## Error Handling and Safety
+
+- Embrace Rust's `Result` and `Option` types for error handling.
+- Use the `?` operator to propagate errors in async functions.
+- Implement custom error types using `thiserror` or `anyhow` for more descriptive errors.
+- Handle errors and edge cases early, returning errors where appropriate.
+- Use `.await` responsibly, ensuring safe points for context switching.
+
+## Performance Optimization
+
+- In the IC's single-threaded environment, avoid the _iter-and-await_ pattern; instead, use `futures::join_all` for parallel execution of independent futures.
+- Remember each `.await` represents its own committed state.
+- Minimize async overhead; prefer synchronous code where async is not needed.
+
+## Building & Deploying
+
+```bash
+# Build the Wasm binary (replace $PACKAGE_NAME with your canister package name)
+cargo build --release --target wasm32-unknown-unknown --package "$PACKAGE_NAME" --locked
+
+# Extract the candid interface (ensure ic_cdk::export_candid! is present)
+candid-extractor "target/wasm32-unknown-unknown/release/${PACKAGE_NAME}.wasm" > "src/${PACKAGE_NAME}/${PACKAGE_NAME}.did"
+# Note: the generated Wasm file may use an underscore (_) instead of a hyphen (-); adjust the path accordingly.
+
+# Deploy the canister
+dfx canister deploy
+```
+
+---
