@@ -1,3 +1,9 @@
+---
+description: IC rust canister development
+globs:
+alwaysApply: true
+---
+
 # Rust ICP Canister Development Guide
 
 ## Key Principles
